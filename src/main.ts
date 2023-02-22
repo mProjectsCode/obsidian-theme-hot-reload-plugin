@@ -5,10 +5,12 @@ import * as path from 'path';
 
 interface ThemeHotReloadSettings {
 	fileWatchers: FileWatcherData[];
+	fileWatcherInterval: number;
 }
 
 const DEFAULT_SETTINGS: ThemeHotReloadSettings = {
 	fileWatchers: [],
+	fileWatcherInterval: 200,
 };
 
 export default class ThemeHotReload extends Plugin {
@@ -26,11 +28,17 @@ export default class ThemeHotReload extends Plugin {
 			id: 'reload-css',
 			name: 'Reload CSS',
 			callback: () => {
-				const themeFilePath = '.obsidian/themes/LemonsDev.css';
-
 				for (const csscacheElement of this.getCSSCache().keys()) {
 					this.reloadCSSFile(csscacheElement);
 				}
+			},
+		});
+
+		this.addCommand({
+			id: 'restart-file-watchers',
+			name: 'Restart File Watchers',
+			callback: () => {
+				this.restartFileWatchers();
 			},
 		});
 
@@ -62,7 +70,9 @@ export default class ThemeHotReload extends Plugin {
 		// @ts-ignore
 		this.getCSSCache().set(filePath, content);
 
-		console.debug('reloaded theme', filePath);
+		let message = `Reloaded css file ${filePath}`
+
+		console.debug(`Theme Hot-Reload | ${message}`);
 	}
 
 	getCSSCache(): Map<string, string> {
@@ -78,20 +88,21 @@ export default class ThemeHotReload extends Plugin {
 
 		for (const fileWatcher of this.settings.fileWatchers) {
 			if (fileWatcher.file === watcherData.file) {
-				new Notice(`watcher for that file already exists`);
+				let message = `File watcher for that file already exists`;
+				new Notice(`Theme Hot-Reload Error\n${message}`);
+				console.warn(`Theme Hot-Reload | ${message}`)
 				return;
 			}
 		}
 
 		if (this.loadFileWatcher(watcherData)) {
 			this.settings.fileWatchers.push(watcherData);
+			this.saveSettings();
 		}
-
-		this.saveSettings();
 	}
 
 	removeFileWatcher(watcherData: FileWatcherData): void {
-		this.disableFileWatcher(watcherData);
+		this.deactivateFileWatcher(watcherData);
 
 		this.settings.fileWatchers = this.settings.fileWatchers.filter(x => x.file !== watcherData.file);
 		this.fileWatchers = this.fileWatchers.filter(x => x.data.file !== watcherData.file);
@@ -99,7 +110,7 @@ export default class ThemeHotReload extends Plugin {
 		this.saveSettings();
 	}
 
-	enableFileWatcher(watcherData: FileWatcherData): void {
+	activateFileWatcher(watcherData: FileWatcherData): void {
 		for (const fileWatcher of this.settings.fileWatchers) {
 			if (fileWatcher.file === watcherData.file) {
 				fileWatcher.active = true;
@@ -116,7 +127,7 @@ export default class ThemeHotReload extends Plugin {
 	}
 
 
-	disableFileWatcher(watcherData: FileWatcherData): void {
+	deactivateFileWatcher(watcherData: FileWatcherData): void {
 		for (const fileWatcher of this.settings.fileWatchers) {
 			if (fileWatcher.file === watcherData.file) {
 				fileWatcher.active = false;
@@ -135,6 +146,9 @@ export default class ThemeHotReload extends Plugin {
 
 	loadFileWatcher(watcherData: FileWatcherData): boolean {
 		try {
+			let message = `Loading file watcher for ${watcherData.file}`;
+			console.log(`Theme Hot-Reload | ${message}`);
+
 			const fileWatcher = new FileWatcher(watcherData, () => this.reloadCSSFile(watcherData.file));
 
 			if (watcherData.active) {
@@ -148,6 +162,23 @@ export default class ThemeHotReload extends Plugin {
 			new Notice(`error while loading file watcher ${e.toString()}`);
 			return false;
 		}
+	}
+
+	restartFileWatchers(): void {
+		let message = `Restarting all file watchers.`
+		console.log(`Theme Hot-Reload | ${message}`);
+
+		for (const fileWatcher of this.fileWatchers) {
+			fileWatcher.disable();
+		}
+
+		this.fileWatchers = [];
+		for (const fileWatcherData of this.settings.fileWatchers) {
+			this.loadFileWatcher(fileWatcherData);
+		}
+
+		let message1 = `Restarted all file watchers.`
+		new Notice(`Theme Hot-Reload\n${message1}`);
 	}
 }
 
@@ -169,24 +200,26 @@ class FileWatcher {
 		if (!fs.existsSync(this.fullPath)) {
 			throw new Error('file does not exist');
 		}
+
+		if (!fs.lstatSync(this.fullPath).isFile()) {
+			throw new Error('filepath must point to a file');
+		}
 	}
 
 	enable(): void {
-		watchFile(this.fullPath, (err) => {
-			if (err instanceof Error) {
-				throw err;
-			}
-			console.log('test');
-			this.onFileUpdate();
-		});
+		fs.watchFile(this.fullPath, {interval: 200}, () => this.onFileUpdate());
+
+		let message = `Activated file watcher for ${this.fullPath}`;
+
+		console.debug(`Theme Hot-Reload | ${message}`);
 	}
 
 	disable(): void {
-		unwatchFile(this.fullPath, (err) => {
-			if (err instanceof Error) {
-				throw err;
-			}
-		});
+		fs.unwatchFile(this.fullPath);
+
+		let message = `Deactivated file watcher for ${this.fullPath}`;
+
+		console.debug(`Theme Hot-Reload | ${message}`);
 	}
 }
 
@@ -204,65 +237,105 @@ class ThemeHotReloadSettingsTab extends PluginSettingTab {
 	display(): void {
 		const {containerEl} = this;
 
-		console.log('re-rendered settings tab');
-
 		containerEl.empty();
 
-		containerEl.createEl('h2', {text: 'Settings for my awesome plugin.'});
+		containerEl.createEl('h1', {text: 'Theme Hot-Reload'});
+		containerEl.createEl('h2', {text: 'File Watchers'});
+
+
+		const restartWatcherSet = new Setting(containerEl);
+		restartWatcherSet.setName('Restart File Watchers');
+		restartWatcherSet.addButton((button) => {
+			button.buttonEl.textContent = 'Restart';
+			button.setWarning();
+			button.onClick(() => {
+				this.plugin.restartFileWatchers();
+				this.display();
+			})
+		});
+
+		const intervalDescFragment = document.createDocumentFragment();
+		intervalDescFragment.appendText('Interval in ms between checks by the file watcher.');
+		intervalDescFragment.createEl('br');
+		intervalDescFragment.createEl('strong', {text: 'File watchers need to be restarted using the setting above for this to take effect.'});
+		intervalDescFragment.createEl('br');
+		intervalDescFragment.createEl('strong', {text: 'Default: '});
+		intervalDescFragment.appendText('200');
+		intervalDescFragment.createEl('br');
+		intervalDescFragment.createEl('strong', {text: 'Min: '});
+		intervalDescFragment.appendText('100');
+		intervalDescFragment.createEl('br');
+		intervalDescFragment.createEl('strong', {text: 'Max: '});
+		intervalDescFragment.appendText('10000');
+
+		const intervalWatcherSet = new Setting(containerEl);
+		intervalWatcherSet.setName('File Watcher Interval');
+		intervalWatcherSet.setDesc(intervalDescFragment)
+		intervalWatcherSet.addText((text) => {
+			text.inputEl.type = 'number';
+			text.setValue(this.plugin.settings.fileWatcherInterval.toString());
+			text.onChange((value) => {
+				let number = Number.parseInt(value);
+				if (Number.isNaN(number) || number < 100 || number > 10000) {
+					number = DEFAULT_SETTINGS.fileWatcherInterval;
+				}
+				this.plugin.settings.fileWatcherInterval = number;
+				this.plugin.saveSettings();
+			})
+		});
 
 		const addWatcherSet = new Setting(containerEl);
-		let textComponent: TextComponent;
+		let addWatcherSetTextComponent: TextComponent;
 		addWatcherSet.setName('Add File Watcher');
 		addWatcherSet.addText((text) => {
 			text.setValue(this.addWatcherText);
 			text.onChange((value) => this.addWatcherText = value);
-			textComponent = text;
+			addWatcherSetTextComponent = text;
 		});
 		addWatcherSet.addButton((button) => {
 			button.setCta();
-			button.buttonEl.textContent = 'add';
-			button.onClick(() => {
-				this.plugin.addFileWatcher(this.addWatcherText);
+			button.setIcon('plus');
+			button.setTooltip('Add');
+			button.onClick(async () => {
+				await this.plugin.addFileWatcher(this.addWatcherText);
 				this.addWatcherText = '';
-				textComponent.setValue(this.addWatcherText);
+				addWatcherSetTextComponent.setValue(this.addWatcherText);
+				this.display();
 			});
 		});
 
-		containerEl.createEl('h3', {text: 'File Watchers'});
+		const div = containerEl.createDiv({cls: 'theme-hot-reload-file-watcher-container'});
 
-		const div = containerEl.createDiv();
+		for (const fileWatcher of this.plugin.fileWatchers) {
+			const watcherSetting = fileWatcher.data;
 
-		console.log(this.plugin.settings.fileWatchers);
-		console.log(this.plugin.fileWatchers);
+			const descFragment = document.createDocumentFragment();
+			descFragment.createEl('strong', {text: 'Full Path: '});
+			descFragment.appendText(fileWatcher.fullPath);
 
-		for (const fileWatcher of this.plugin.settings.fileWatchers) {
 			const set = new Setting(div);
-			set.setName(fileWatcher.file);
-			if (!fileWatcher.active) {
-				set.addButton((button) => {
-					button.setCta();
-					button.buttonEl.textContent = 'enable';
-					button.onClick(() => {
-						this.plugin.enableFileWatcher(fileWatcher);
-						this.display();
-					});
+			set.setName(watcherSetting.file);
+			set.setDesc(descFragment);
+
+			set.addToggle((toggle) => {
+				toggle.setTooltip('Active');
+				toggle.setValue(watcherSetting.active);
+				toggle.onChange((value) => {
+					if (value) {
+						this.plugin.activateFileWatcher(watcherSetting);
+					} else {
+						this.plugin.deactivateFileWatcher(watcherSetting);
+					}
+					this.display();
 				});
-			} else {
-				set.addButton((button) => {
-					button.setWarning();
-					button.buttonEl.textContent = 'disable';
-					button.onClick(() => {
-						this.plugin.disableFileWatcher(fileWatcher);
-						this.display();
-					});
-				});
-			}
+			});
 
 			set.addButton((button) => {
 				button.setWarning();
-				button.buttonEl.textContent = 'delete';
+				button.setIcon('trash');
+				button.setTooltip('Delete');
 				button.onClick(() => {
-					this.plugin.removeFileWatcher(fileWatcher);
+					this.plugin.removeFileWatcher(watcherSetting);
 					this.display();
 				});
 			});
@@ -270,54 +343,7 @@ class ThemeHotReloadSettingsTab extends PluginSettingTab {
 	}
 }
 
-
 function getVaultBasePath(): string {
 	// @ts-ignore undocumented but works
 	return app.vault.adapter.getBasePath();
-}
-
-/**
- * Helper for watchFile, also handling symlinks
- * From https://stackoverflow.com/questions/9364514/how-to-watch-symlinked-files-in-node-js-using-watchfile
- */
-function watchFile(path: string, callback: (err?: any) => void): void {
-	// Check if it's a link
-	fs.lstat(path, function (err, stats) {
-		if (err) {
-			// Handle errors
-			return callback(err);
-		} else if (stats.isSymbolicLink()) {
-			// Read symlink
-			fs.readlink(path, function (err, realPath) {
-				// Handle errors
-				if (err) return callback(err);
-				// Watch the real file
-				fs.watchFile(realPath, {interval: 200}, callback);
-			});
-		} else {
-			// It's not a symlink, just watch it
-			fs.watchFile(path, {interval: 200}, callback);
-		}
-	});
-}
-
-function unwatchFile(path: string, callback: (err?: any) => void): void {
-	// Check if it's a link
-	fs.lstat(path, function (err, stats) {
-		if (err) {
-			// Handle errors
-			return callback(err);
-		} else if (stats.isSymbolicLink()) {
-			// Read symlink
-			fs.readlink(path, function (err, realPath) {
-				// Handle errors
-				if (err) return callback(err);
-				// Watch the real file
-				fs.unwatchFile(realPath);
-			});
-		} else {
-			// It's not a symlink, just watch it
-			fs.unwatchFile(path);
-		}
-	});
 }
