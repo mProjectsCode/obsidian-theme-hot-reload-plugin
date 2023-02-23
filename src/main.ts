@@ -202,10 +202,6 @@ class FileWatcher {
 		if (!fs.existsSync(this.fullPath)) {
 			throw new Error('file does not exist');
 		}
-
-		if (!fs.lstatSync(this.fullPath).isFile()) {
-			throw new Error('filepath must point to a file');
-		}
 	}
 
 	enable(): void {
