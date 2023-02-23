@@ -69,6 +69,8 @@ export default class ThemeHotReload extends Plugin {
 
 		// @ts-ignore
 		this.getCSSCache().set(filePath, content);
+		// @ts-ignore
+		this.app.customCss.requestLoadTheme();
 
 		let message = `Reloaded css file ${filePath}`
 
